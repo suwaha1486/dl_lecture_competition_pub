@@ -27,14 +27,28 @@ def set_seed(seed):
     torch.backends.cudnn.benchmark = False
     np.random.seed(seed)
 
-def compute_epe_error(pred_flow: torch.Tensor, gt_flow: torch.Tensor):
+def compute_epe_error(pred_flows: Dict[str, torch.Tensor], gt_flow: torch.Tensor):
     '''
-    end-point-error (ground truthと予測値の二乗誤差)を計算
-    pred_flow: torch.Tensor, Shape: torch.Size([B, 2, 480, 640]) => 予測したオプティカルフローデータ
+    異なるスケールのflowを用いてend-point-errorを計算
+    pred_flows: Dict[str, torch.Tensor] => 予測したオプティカルフローデータの辞書. keyはflow0~flow3
     gt_flow: torch.Tensor, Shape: torch.Size([B, 2, 480, 640]) => 正解のオプティカルフローデータ
     '''
-    epe = torch.mean(torch.mean(torch.norm(pred_flow - gt_flow, p=2, dim=1), dim=(1, 2)), dim=0)
-    return epe
+    loss = 0
+    weights = [1.0, 0.5, 0.25, 0.125]  # スケールごとの重み
+
+    _, _, h, w = gt_flow.shape # Ground Truthのサイズを取得
+
+    for i in range(4):
+        flow_key = f'flow{i}'
+        scale_factor = 2**(3-i)  # flow0は1/8スケール、flow1は1/4スケール...
+
+        # Ground Truthを対応するスケールにダウンサンプリング
+        gt_flow_resized = F.interpolate(gt_flow, size=(h // scale_factor, w // scale_factor), mode='bilinear', align_corners=True)
+
+        # ロス計算
+        loss += weights[i] * torch.mean(torch.norm(pred_flows[flow_key] - gt_flow_resized, p=2, dim=1)) 
+
+    return loss
 
 def save_optical_flow_to_npy(flow: torch.Tensor, file_name: str):
     '''
@@ -127,8 +141,8 @@ def main(args: DictConfig):
             batch: Dict[str, Any]
             event_image = batch["event_volume"].to(device) # [B, 4, 480, 640]
             ground_truth_flow = batch["flow_gt"].to(device) # [B, 2, 480, 640]
-            flow = model(event_image) # [B, 2, 480, 640]
-            loss: torch.Tensor = compute_epe_error(flow, ground_truth_flow)
+            flow_dict = model(event_image) # Dict[str, torch.Tensor]
+            loss: torch.Tensor = compute_epe_error(flow_dict, ground_truth_flow) # compute_epe_errorを変更
             print(f"batch {i} loss: {loss.item()}")
             optimizer.zero_grad()
             loss.backward()
