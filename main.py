@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F # 追加
 import hydra
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader
@@ -171,7 +172,8 @@ def main(args: DictConfig):
         for batch in tqdm(test_data):
             batch: Dict[str, Any]
             event_image = batch["event_volume"].to(device)
-            batch_flow = model(event_image) # [1, 2, 480, 640]
+            flow_dict = model(event_image) # 返り値はflow_dict
+            batch_flow = flow_dict["flow3"] # [1, 2, 480, 640]
             flow = torch.cat((flow, batch_flow), dim=0)  # [N, 2, 480, 640]
         print("test done")
     # ------------------
