@@ -35,7 +35,7 @@ def compute_epe_error(pred_flows: Dict[str, torch.Tensor], gt_flow: torch.Tensor
     gt_flow: torch.Tensor, Shape: torch.Size([B, 2, 480, 640]) => 正解のオプティカルフローデータ
     '''
     loss = 0
-    weights = [1.0, 0.5, 0.25, 0.125]  # スケールごとの重み
+    weights = [0.125, 0.25, 0.5, 1.0]  # スケールごとの重み
 
     _, _, h, w = gt_flow.shape # Ground Truthのサイズを取得
 
