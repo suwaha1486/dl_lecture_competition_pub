@@ -34,7 +34,7 @@ def compute_epe_error(pred_flows: Dict[str, torch.Tensor], gt_flow: torch.Tensor
     pred_flows: Dict[str, torch.Tensor] => 予測したオプティカルフローデータの辞書. keyはflow0~flow3
     gt_flow: torch.Tensor, Shape: torch.Size([B, 2, 480, 640]) => 正解のオプティカルフローデータ
     '''
-    loss = 0
+    loss_i = [0] * 4
     weights = [0.125, 0.25, 0.5, 1.0]  # スケールごとの重み
 
     _, _, h, w = gt_flow.shape # Ground Truthのサイズを取得
@@ -47,7 +47,9 @@ def compute_epe_error(pred_flows: Dict[str, torch.Tensor], gt_flow: torch.Tensor
         gt_flow_resized = F.interpolate(gt_flow, size=(h // scale_factor, w // scale_factor), mode='bilinear', align_corners=True)
 
         # ロス計算
-        loss += weights[i] * torch.mean(torch.norm(pred_flows[flow_key] - gt_flow_resized, p=2, dim=1)) 
+        loss_i[i] = weights[i] * torch.mean(torch.norm(pred_flows[flow_key] - gt_flow_resized, p=2, dim=1)) 
+    
+    loss = sum(loss_i)
 
     return loss
 
