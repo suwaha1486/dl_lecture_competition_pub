@@ -99,10 +99,27 @@ def main(args: DictConfig):
     )
     train_set = loader.get_train_dataset()
     test_set = loader.get_test_dataset()
+    
+    # データセットのサイズを取得
+    dataset_size = len(train_set)
+
+    # 8:2で分割
+    train_size = int(dataset_size * 0.8)
+    val_size = dataset_size - train_size
+
+    # データセットを分割
+    train_dataset, val_dataset = torch.utils.data.random_split(train_set, [train_size, val_size])
+    
     collate_fn = train_collate
     train_data = DataLoader(train_set,
                                  batch_size=args.data_loader.train.batch_size,
                                  shuffle=args.data_loader.train.shuffle,
+                                 collate_fn=collate_fn,
+                                 drop_last=False)
+    # validation追加
+    val_data = DataLoader(val_dataset,
+                                 batch_size=args.data_loader.test.batch_size,
+                                 shuffle=args.data_loader.test.shuffle,
                                  collate_fn=collate_fn,
                                  drop_last=False)
     test_data = DataLoader(test_set,
@@ -136,8 +153,14 @@ def main(args: DictConfig):
     # ------------------
     #   Start training
     # ------------------
-    model.train()
+    best_val_loss = float('inf')  # 初期のバリデーションロスを無限大に設定
+    
+    # Create the directory if it doesn't exist
+    if not os.path.exists('checkpoints'):
+        os.makedirs('checkpoints')
+    
     for epoch in range(args.train.epochs):
+        model.train()
         total_loss = 0
         print("on epoch: {}".format(epoch+1))
         for i, batch in enumerate(tqdm(train_data)):
@@ -153,20 +176,34 @@ def main(args: DictConfig):
 
             total_loss += loss.item()
         print(f'Epoch {epoch+1}, Loss: {total_loss / len(train_data)}')
+        
+        # --- バリデーションフェーズ ---
+        model.eval()  # モデルを評価モードに切り替え
+        val_loss = 0
+        with torch.no_grad():  # 勾配計算を行わない
+            for j, val_batch in enumerate(tqdm(val_data)):
+                val_event_image = val_batch["event_volume"].to(device)
+                val_ground_truth_flow = val_batch["flow_gt"].to(device)
+                val_flow_dict = model(val_event_image)
+                val_batch_loss = compute_epe_error(val_flow_dict, val_ground_truth_flow)
+                val_loss += val_batch_loss.item()
 
-    # Create the directory if it doesn't exist
-    if not os.path.exists('checkpoints'):
-        os.makedirs('checkpoints')
-    
-    current_time = time.strftime("%Y%m%d%H%M%S")
-    model_path = f"checkpoints/model_{current_time}.pth"
-    torch.save(model.state_dict(), model_path)
-    print(f"Model saved to {model_path}")
+        avg_val_loss = val_loss / len(val_data)
+        print(f"Epoch {epoch+1}, Validation Loss: {avg_val_loss:.4f}")
+        
+        # --- ベストモデルの保存 ---
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            # ベストモデルを保存
+            current_time = time.strftime("%Y%m%d%H%M%S")
+            best_model_path = f"checkpoints/best_model_{current_time}.pth"
+            torch.save(model.state_dict(), best_model_path)
+            print(f"Best model saved to {best_model_path}")
 
     # ------------------
     #   Start predicting
     # ------------------
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.load_state_dict(torch.load(best_model_path, map_location=device))
     model.eval()
     flow: torch.Tensor = torch.tensor([]).to(device)
     with torch.no_grad():
