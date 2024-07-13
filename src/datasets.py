@@ -506,6 +506,17 @@ class SequenceRecurrent(Sequence):
                 self.timestamps_flow[self.valid_indices[idx]]))
         else:
             sequence[0]['new_sequence'] = 0
+        
+        # データ拡張の追加
+        if self.mode == 'train':
+            for sample in sequence:
+                if random.random() < 0.5:  # 確率0.5で水平反転
+                    for key in keys_to_crop:
+                        if isinstance(sample[key], torch.Tensor):
+                            sample[key] = tf.functional.hflip(sample[key])
+                        elif isinstance(sample[key], (list, tuple)):
+                            sample[key] = [tf.functional.hflip(v) for v in sample[key]]
+
 
         # random crop
         if self.crop_size is not None:
