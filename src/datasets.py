@@ -319,6 +319,10 @@ class Sequence(Dataset):
     def get_data(self, index) -> Dict[str, any]:
         ts_start: int = self.timestamps_flow[index] - self.delta_t_us
         ts_end: int = self.timestamps_flow[index]
+        
+        # 次のフレームワークのタイムスタンプ取得
+        next_ts_start = self.timestamps_flow[index + 1] - self.delta_t_us  
+        next_ts_end = self.timestamps_flow[index + 1]
 
         file_index = self.indices[index]
 
@@ -340,13 +344,29 @@ class Sequence(Dataset):
         xy_rect = self.rectify_events(x, y)
         x_rect = xy_rect[:, 0]
         y_rect = xy_rect[:, 1]
+        
+        # 次のフレームのイベントデータを取得
+        next_event_data = self.event_slicer.get_events(next_ts_start, next_ts_end)
+        next_p = next_event_data['p']
+        next_t = next_event_data['t']
+        next_x = next_event_data['x']
+        next_y = next_event_data['y']
+
+        next_xy_rect = self.rectify_events(next_x, next_y)
+        next_x_rect = next_xy_rect[:, 0]
+        next_y_rect = next_xy_rect[:, 1]
 
         if self.voxel_grid is None:
             raise NotImplementedError
         else:
             event_representation = self.events_to_voxel_grid(
                 p, t, x_rect, y_rect)
-            output['event_volume'] = event_representation
+            # 次のフレームのイベント表現を作成
+            next_event_representation = self.events_to_voxel_grid(
+                next_p, next_t, next_x_rect, next_y_rect)
+            # 2つのイベント表現を結合
+            output['event_volume'] = torch.cat((event_representation, next_event_representation), dim=0)  
+            
         output['name_map'] = self.name_idx
         
         if self.load_gt:
