@@ -111,12 +111,11 @@ def main(args: DictConfig):
     train_dataset, val_dataset = torch.utils.data.random_split(train_set, [train_size, val_size])
     
     collate_fn = train_collate
-    train_data = DataLoader(train_set,
+    train_data = DataLoader(train_dataset,
                                  batch_size=args.data_loader.train.batch_size,
                                  shuffle=args.data_loader.train.shuffle,
                                  collate_fn=collate_fn,
                                  drop_last=False)
-    # validation追加
     val_data = DataLoader(val_dataset,
                                  batch_size=args.data_loader.test.batch_size,
                                  shuffle=args.data_loader.test.shuffle,
