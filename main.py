@@ -36,12 +36,11 @@ def compute_epe_error(pred_flows: Dict[str, torch.Tensor], gt_flow: torch.Tensor
     '''
 
     epe_loss = 0
-    smoothness_loss_total = 0
 
     scale = epoch / total_epochs
-    weights = [0.125 * scale, 
-               0.25 * scale, 
-               0.5 * scale, 
+    weights = [0.10 * (1 - scale), 
+               0.15 * (1 - scale), 
+               0.20 * (1 - scale), 
                1.0]
 
     _, _, h, w = gt_flow.shape
@@ -50,28 +49,27 @@ def compute_epe_error(pred_flows: Dict[str, torch.Tensor], gt_flow: torch.Tensor
         flow_key = f'flow{i}'
         scale_factor = 2**(3-i) 
 
-        gt_flow_resized = F.interpolate(gt_flow, size=(h // scale_factor, w // scale_factor), mode='bilinear', align_corners=True)
+        gt_flow_resized = F.interpolate(gt_flow, size=(h // scale_factor, w // scale_factor), mode='bicubic', align_corners=True)
         epe_loss += weights[i] * torch.mean(torch.mean(torch.norm(pred_flows[flow_key] - gt_flow_resized, p=2, dim=1), dim=(1, 2)), dim=0)
 
-        flow = pred_flows[flow_key]
-        flow_ucrop = flow[..., 1:]
-        flow_dcrop = flow[..., :-1]
-        flow_lcrop = flow[..., 1:, :]
-        flow_rcrop = flow[..., :-1, :]
+    flow = pred_flows["flow3"]
+    flow_ucrop = flow[..., 1:]
+    flow_dcrop = flow[..., :-1]
+    flow_lcrop = flow[..., 1:, :]
+    flow_rcrop = flow[..., :-1, :]
 
-        flow_ulcrop = flow[..., 1:, 1:]
-        flow_drcrop = flow[..., :-1, :-1]
-        flow_dlcrop = flow[..., :-1, 1:]
-        flow_urcrop = flow[..., 1:, :-1]
-        
-        smoothness_loss = charbonnier_loss(flow_lcrop - flow_rcrop) +\
-                        charbonnier_loss(flow_ucrop - flow_dcrop) +\
-                        charbonnier_loss(flow_ulcrop - flow_drcrop) +\
-                        charbonnier_loss(flow_dlcrop - flow_urcrop)
-        
-        smoothness_loss_total += smoothness_loss / 4
+    flow_ulcrop = flow[..., 1:, 1:]
+    flow_drcrop = flow[..., :-1, :-1]
+    flow_dlcrop = flow[..., :-1, 1:]
+    flow_urcrop = flow[..., 1:, :-1]
     
-    loss = epe_loss + 0.1 * smoothness_loss_total
+    smoothness_loss = charbonnier_loss(flow_lcrop - flow_rcrop) +\
+                    charbonnier_loss(flow_ucrop - flow_dcrop) +\
+                    charbonnier_loss(flow_ulcrop - flow_drcrop) +\
+                    charbonnier_loss(flow_dlcrop - flow_urcrop)
+        
+    
+    loss = epe_loss + 0.1 * smoothness_loss
 
     return loss
 
