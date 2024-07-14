@@ -508,7 +508,7 @@ class SequenceRecurrent(Sequence):
             sequence[0]['new_sequence'] = 0
         
         # random crop
-        if self.crop_size is not None:
+        if self.mode == "train" and self.crop_size is not None:
             i, j, h, w = RandomCrop.get_params(
                 sample["event_volume_old"], output_size=self.crop_size)
             keys_to_crop = ["event_volume_old", "event_volume_new",
@@ -558,8 +558,11 @@ class DatasetProvider:
         for seq in seqs:
             extra_arg = dict()
             train_sequences.append(Sequence(Path(train_path) / seq,
-                                   representation_type=representation_type, mode="train",
-                                   load_gt=True, **extra_arg))
+                                   representation_type=representation_type, 
+                                   mode="train",
+                                   load_gt=True, 
+                                   transforms={'randomcrop': (430, 580)},
+                                   **extra_arg))
             self.train_dataset: torch.utils.data.ConcatDataset[Sequence] = torch.utils.data.ConcatDataset(train_sequences)
 
     def get_test_dataset(self):
