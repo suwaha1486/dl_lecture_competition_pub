@@ -3,7 +3,7 @@ from torch import nn
 from src.models.base import *
 from typing import Dict, Any
 
-_BASE_CHANNELS = 64
+_BASE_CHANNELS = 32
 
 class EVFlowNet(nn.Module):
     def __init__(self, args):
