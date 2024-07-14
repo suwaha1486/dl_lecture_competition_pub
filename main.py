@@ -28,56 +28,48 @@ def set_seed(seed):
     torch.backends.cudnn.benchmark = False
     np.random.seed(seed)
 
-def compute_epe_error(pred_flows: Dict[str, torch.Tensor], gt_flow: torch.Tensor, epoch, total_epochs):
+def compute_epe_error(pred_flows: Dict[str, torch.Tensor], gt_flow: torch.Tensor):
     '''
     異なるスケールのflowを用いてend-point-errorを計算
     pred_flows: Dict[str, torch.Tensor] => 予測したオプティカルフローデータの辞書. keyはflow0~flow3
     gt_flow: torch.Tensor, Shape: torch.Size([B, 2, 480, 640]) => 正解のオプティカルフローデータ
     '''
-    scale = epoch / total_epochs
-    weights = [0.125 * (1 - scale) + 0.5 * scale, 
-               0.25 * (1 - scale) + 0.7 * scale, 
-               0.5 * (1 - scale) + 0.9 * scale, 
-               1.0]  
-    
-    epe_loss = [0] * 4
 
-    _, _, h, w = gt_flow.shape # Ground Truthのサイズを取得
+    epe_loss = 0
+    smoothness_loss_total = 0
+
+    _, _, h, w = gt_flow.shape
 
     for i in range(4):
         flow_key = f'flow{i}'
-        scale_factor = 2**(3-i)  # flow0は1/8スケール、flow1は1/4スケール...
+        scale_factor = 2**(3-i) 
 
-        # Ground Truthを対応するスケールにダウンサンプリング
         gt_flow_resized = F.interpolate(gt_flow, size=(h // scale_factor, w // scale_factor), mode='bilinear', align_corners=True)
+        epe_loss += torch.mean(torch.mean(torch.norm(pred_flows[flow_key] - gt_flow_resized, p=2, dim=1), dim=(1, 2)), dim=0)
 
-        # ロス計算
-        epe_loss[i] = weights[i] * torch.mean(torch.mean(torch.norm(pred_flows[flow_key] - gt_flow_resized, p=2, dim=1), dim=(1, 2)), dim=0)
-    
-    # --- Smoothness Constraintを追加 ---
-    smoothness_loss = [0] * 4
-    for i in range(4):
-        flow_key = f'flow{i}'
         flow = pred_flows[flow_key]
-        smoothness_loss[i] += charbonnier_loss(flow[:, :, :, :-1] - flow[:, :, :, 1:])  # 水平方向の勾配
-        smoothness_loss[i] += charbonnier_loss(flow[:, :, :-1, :] - flow[:, :, 1:, :])  # 垂直方向の勾配
+        flow_ucrop = flow[..., 1:]
+        flow_dcrop = flow[..., :-1]
+        flow_lcrop = flow[..., 1:, :]
+        flow_rcrop = flow[..., :-1, :]
 
-    loss = sum(epe_loss) + 0.1 * sum(smoothness_loss)
+        flow_ulcrop = flow[..., 1:, 1:]
+        flow_drcrop = flow[..., :-1, :-1]
+        flow_dlcrop = flow[..., :-1, 1:]
+        flow_urcrop = flow[..., 1:, :-1]
+        
+        smoothness_loss = charbonnier_loss(flow_lcrop - flow_rcrop) +\
+                        charbonnier_loss(flow_ucrop - flow_dcrop) +\
+                        charbonnier_loss(flow_ulcrop - flow_drcrop) +\
+                        charbonnier_loss(flow_dlcrop - flow_urcrop)
+        
+        smoothness_loss_total += smoothness_loss / 4
+    
+    loss = epe_loss + 0.1 * smoothness_loss_total
 
     return loss
 
-def charbonnier_loss(x, alpha=0.45, epsilon=1e-6):
-    """
-    Generalized Charbonnier loss function.
-
-    Args:
-        x: Input tensor.
-        alpha: A parameter controlling the shape of the loss function.
-        epsilon: A small constant for numerical stability.
-
-    Returns:
-        The charbonnier loss.
-    """
+def charbonnier_loss(x, alpha=0.45, epsilon=1e-3):
     return torch.mean(torch.pow(torch.pow(x, 2) + epsilon**2, alpha))
 
 def compute_last_epe_error(pred_flows: Dict[str, torch.Tensor], gt_flow: torch.Tensor):
@@ -198,8 +190,8 @@ def main(args: DictConfig):
             event_image = batch["event_volume"].to(device) # [B, 4, 480, 640]
             ground_truth_flow = batch["flow_gt"].to(device) # [B, 2, 480, 640]
             flow_dict = model(event_image) # Dict[str, torch.Tensor]
-            loss: torch.Tensor = compute_epe_error(flow_dict, ground_truth_flow, epoch, args.train.epochs) # compute_epe_errorを変更
-            print(f"batch {i} loss: {loss.item()}")
+            loss: torch.Tensor = compute_epe_error(flow_dict, ground_truth_flow)
+            # print(f"batch {i} loss: {loss.item()}")
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
