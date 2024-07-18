@@ -10,7 +10,10 @@ class EVFlowNet(nn.Module):
         super(EVFlowNet,self).__init__()
         self._args = args
 
-        self.encoder1 = general_conv2d(in_channels = 4, out_channels=_BASE_CHANNELS, do_batch_norm=not self._args.no_batch_norm)
+        self.dropout_enc = nn.Dropout(p=0.4)
+        self.dropout_dec = nn.Dropout(p=0.25)
+
+        self.encoder1 = general_conv2d(in_channels = 8, out_channels=_BASE_CHANNELS, do_batch_norm=not self._args.no_batch_norm)
         self.encoder2 = general_conv2d(in_channels = _BASE_CHANNELS, out_channels=2*_BASE_CHANNELS, do_batch_norm=not self._args.no_batch_norm)
         self.encoder3 = general_conv2d(in_channels = 2*_BASE_CHANNELS, out_channels=4*_BASE_CHANNELS, do_batch_norm=not self._args.no_batch_norm)
         self.encoder4 = general_conv2d(in_channels = 4*_BASE_CHANNELS, out_channels=8*_BASE_CHANNELS, do_batch_norm=not self._args.no_batch_norm)
@@ -32,14 +35,23 @@ class EVFlowNet(nn.Module):
     def forward(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         # encoder
         skip_connections = {}
+        
         inputs = self.encoder1(inputs)
         skip_connections['skip0'] = inputs.clone()
+        inputs = self.dropout_enc(inputs)
+
+
         inputs = self.encoder2(inputs)
         skip_connections['skip1'] = inputs.clone()
+        inputs = self.dropout_enc(inputs)
+
         inputs = self.encoder3(inputs)
         skip_connections['skip2'] = inputs.clone()
+        inputs = self.dropout_enc(inputs)
+
         inputs = self.encoder4(inputs)
         skip_connections['skip3'] = inputs.clone()
+        inputs = self.dropout_enc(inputs)
 
         # transition
         inputs = self.resnet_block(inputs)
@@ -48,14 +60,17 @@ class EVFlowNet(nn.Module):
         flow_dict = {}
         inputs = torch.cat([inputs, skip_connections['skip3']], dim=1)
         inputs, flow = self.decoder1(inputs)
+        inputs = self.dropout_dec(inputs)
         flow_dict['flow0'] = flow.clone()
 
         inputs = torch.cat([inputs, skip_connections['skip2']], dim=1)
         inputs, flow = self.decoder2(inputs)
+        inputs = self.dropout_dec(inputs)
         flow_dict['flow1'] = flow.clone()
 
         inputs = torch.cat([inputs, skip_connections['skip1']], dim=1)
         inputs, flow = self.decoder3(inputs)
+        inputs = self.dropout_dec(inputs)
         flow_dict['flow2'] = flow.clone()
 
         inputs = torch.cat([inputs, skip_connections['skip0']], dim=1)

@@ -320,6 +320,10 @@ class Sequence(Dataset):
         ts_start: int = self.timestamps_flow[index] - self.delta_t_us
         ts_end: int = self.timestamps_flow[index]
 
+        # 前のフレームのタイムスタンプを取得
+        prev_ts_start = self.timestamps_flow[index - 1] - self.delta_t_us if index > 0 else ts_start
+        prev_ts_end = self.timestamps_flow[index - 1] if index > 0 else ts_end
+
         file_index = self.indices[index]
 
         output = {
@@ -341,22 +345,39 @@ class Sequence(Dataset):
         x_rect = xy_rect[:, 0]
         y_rect = xy_rect[:, 1]
 
+        # 前のフレームのイベントデータを取得
+        pred_event_data = self.event_slicer.get_events(
+            prev_ts_start, prev_ts_end)
+        pred_p = pred_event_data['p']
+        pred_t = pred_event_data['t']
+        pred_x = pred_event_data['x']
+        pred_y = pred_event_data['y']
+
+        pred_xy_rect = self.rectify_events(pred_x, pred_y)
+        pred_x_rect = pred_xy_rect[:, 0]
+        pred_y_rect = pred_xy_rect[:, 1]
+
         if self.voxel_grid is None:
             raise NotImplementedError
         else:
             event_representation = self.events_to_voxel_grid(
                 p, t, x_rect, y_rect)
-            output['event_volume'] = event_representation
+            # 次のフレームのイベント表現を作成
+            pred_event_representation = self.events_to_voxel_grid(
+                pred_p, pred_t, pred_x_rect, pred_y_rect)
+            # 2つのイベント表現を結合
+            output['event_volume'] = torch.cat((pred_event_representation, event_representation), dim=0)
+
         output['name_map'] = self.name_idx
         
         if self.load_gt:
-            output['flow_gt'
-                ] = [torch.tensor(x) for x in self.load_flow(self.flow_png[index])]
+            if index > 0:
+                output['flow_gt'] = [torch.tensor(x) for x in self.load_flow(self.flow_png[index - 1])]
+            else:
+                output['flow_gt'] = [torch.tensor(x) for x in self.load_flow(self.flow_png[index])]
+            output['flow_gt'][0] = torch.moveaxis(output['flow_gt'][0], -1, 0)
+            output['flow_gt'][1] = torch.unsqueeze(output['flow_gt'][1], 0)
 
-            output['flow_gt'
-                ][0] = torch.moveaxis(output['flow_gt'][0], -1, 0)
-            output['flow_gt'
-                ][1] = torch.unsqueeze(output['flow_gt'][1], 0)
         return output
 
     def __getitem__(self, idx):
@@ -561,7 +582,7 @@ class DatasetProvider:
                                    representation_type=representation_type, 
                                    mode="train",
                                    load_gt=True, 
-                                   transforms={'randomcrop': (430, 580)},
+                                   transforms={'randomcrop': (400, 600)},
                                    **extra_arg))
             self.train_dataset: torch.utils.data.ConcatDataset[Sequence] = torch.utils.data.ConcatDataset(train_sequences)
 

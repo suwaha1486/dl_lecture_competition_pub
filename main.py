@@ -28,7 +28,7 @@ def set_seed(seed):
     torch.backends.cudnn.benchmark = False
     np.random.seed(seed)
 
-def compute_epe_error(pred_flows: Dict[str, torch.Tensor], gt_flow: torch.Tensor, epoch, total_epochs):
+def compute_epe_error(pred_flows: Dict[str, torch.Tensor], gt_flow: torch.Tensor, epoch, total_epochs, prev_pred_flows=None, current_seq_name=None, prev_seq_name=None):
     '''
     異なるスケールのflowを用いてend-point-errorを計算
     pred_flows: Dict[str, torch.Tensor] => 予測したオプティカルフローデータの辞書. keyはflow0~flow3
@@ -37,12 +37,8 @@ def compute_epe_error(pred_flows: Dict[str, torch.Tensor], gt_flow: torch.Tensor
 
     epe_loss = 0
 
-    scale = epoch / total_epochs
-    weights = [0.10 * (1 - scale), 
-               0.15 * (1 - scale), 
-               0.20 * (1 - scale), 
-               1.0]
-
+    weights = [0.01, 0.05, 0.1, 1.0]
+    
     _, _, h, w = gt_flow.shape
 
     for i in range(4):
@@ -51,7 +47,8 @@ def compute_epe_error(pred_flows: Dict[str, torch.Tensor], gt_flow: torch.Tensor
 
         gt_flow_resized = F.interpolate(gt_flow, size=(h // scale_factor, w // scale_factor), mode='bicubic', align_corners=True)
         epe_loss += weights[i] * torch.mean(torch.mean(torch.norm(pred_flows[flow_key] - gt_flow_resized, p=2, dim=1), dim=(1, 2)), dim=0)
-
+    
+    # smoothness loss
     flow = pred_flows["flow3"]
     flow_ucrop = flow[..., 1:]
     flow_dcrop = flow[..., :-1]
@@ -67,9 +64,14 @@ def compute_epe_error(pred_flows: Dict[str, torch.Tensor], gt_flow: torch.Tensor
                     charbonnier_loss(flow_ucrop - flow_dcrop) +\
                     charbonnier_loss(flow_ulcrop - flow_drcrop) +\
                     charbonnier_loss(flow_dlcrop - flow_urcrop)
-        
     
-    loss = epe_loss + 0.1 * smoothness_loss
+    # --- 時間方向の正則化項を追加 ---
+    temporal_loss = 0
+    if prev_pred_flows is not None and current_seq_name == prev_seq_name:
+        temporal_loss = charbonnier_loss(pred_flows["flow3"] - prev_pred_flows["flow3"])
+        
+    # loss合計
+    loss = epe_loss + 0.05 * smoothness_loss + 0.01 * temporal_loss
 
     return loss
 
@@ -185,23 +187,32 @@ def main(args: DictConfig):
     if not os.path.exists('checkpoints'):
         os.makedirs('checkpoints')
     
+    train_loss = []
+    valid_loss = []
+    
     for epoch in range(args.train.epochs):
         model.train()
         total_loss = 0
+        prev_flow_dict = None
+        prev_seq_name = None
+        
         print("on epoch: {}".format(epoch+1))
         for i, batch in enumerate(tqdm(train_data)):
             batch: Dict[str, Any]
             event_image = batch["event_volume"].to(device) # [B, 4, 480, 640]
             ground_truth_flow = batch["flow_gt"].to(device) # [B, 2, 480, 640]
             flow_dict = model(event_image) # Dict[str, torch.Tensor]
-            loss: torch.Tensor = compute_epe_error(flow_dict, ground_truth_flow, epoch, args.train.epochs)
+            loss: torch.Tensor = compute_epe_error(flow_dict, ground_truth_flow, epoch, args.train.epochs, prev_flow_dict, batch["seq_name"][0], prev_seq_name)
             # print(f"batch {i} loss: {loss.item()}")
+            pred_flow_dict = flow_dict
+            prev_seq_name = batch["seq_name"][0]
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
             total_loss += loss.item()
         print(f'Epoch {epoch+1}, Loss: {total_loss / len(train_data)}')
+        train_loss.append(total_loss / len(train_data))
         
         # --- バリデーションフェーズ ---
         model.eval()  # モデルを評価モードに切り替え
@@ -216,6 +227,7 @@ def main(args: DictConfig):
 
         avg_val_loss = val_loss / len(val_data)
         print(f"Epoch {epoch+1}, Validation Loss: {avg_val_loss:.4f}")
+        valid_loss.append(avg_val_loss)
         
         # --- ベストモデルの保存 ---
         if avg_val_loss < best_val_loss:
@@ -225,6 +237,12 @@ def main(args: DictConfig):
             best_model_path = f"checkpoints/best_model_{current_time}.pth"
             torch.save(model.state_dict(), best_model_path)
             print(f"Best model saved to {best_model_path}")
+        
+        for i in range(epoch+1):
+            print(f'Epoch {i+1}, Train Loss: {train_loss[i]}, Valid Loss: {valid_loss[i]}')
+            if valid_loss[i] == best_val_loss:
+                print("↑ best valid loss")
+        print(f"Best model saved to {best_model_path}")
 
     # ------------------
     #   Start predicting
